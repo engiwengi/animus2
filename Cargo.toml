@@ -1,0 +1,33 @@
+[package]
+name = "animus-lib"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.65"
+crossbeam-channel = "0.5.6"
+derive_more = "0.99.17"
+enum-kinds = "0.5.1"
+futures = "0.3.25"
+proxy-enum = "0.3.1"
+speedy = "0.8.3"
+thiserror = "1.0.37"
+tokio = { version = "1.21.2", features = ["full"] }
+tracing = "0.1.37"
+
+
+[dev-dependencies]
+rstest = "0.15.0"
+tokio = { version = "1.21.2", features = ["full", "test-util"] }
+tokio-test = "0.4.2"
+tracing-test = "0.2.3"
+
+[[bin]]
+name = "server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "client"
+path = "src/bin/client.rs"
