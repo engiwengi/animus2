@@ -7,12 +7,15 @@ use tokio::{
 };
 use tracing::info;
 
-use super::{
-    accept::AsyncAccept,
-    connection::Connection,
-    mediator::{AnyPacketMediator, NetworkEvent, PacketSenderMap},
-    packet::{EncodedPacket, Packet},
-    task::{AcceptConnectionsTask, BroadcastChannel, ReceivePacketsTask, SendPacketsTask},
+use crate::{
+    channel::BroadcastChannel,
+    network::{
+        accept::AsyncAccept,
+        connection::Connection,
+        mediator::{AnyPacketMediator, NetworkEvent, PacketSenderMap},
+        packet::{EncodedPacket, Packet},
+        task::{accept::AcceptConnectionsTask, recv::ReceivePacketsTask, send::SendPacketsTask},
+    },
 };
 
 pub struct NetworkBase<P>
