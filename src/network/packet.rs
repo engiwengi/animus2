@@ -2,6 +2,8 @@ use std::{hash::Hash, io::Write, sync::Arc};
 
 use speedy::{Readable, Writable};
 
+use super::error::Result;
+
 pub struct AnyPacketWithConnId<T> {
     pub connection_id: u64,
     pub packet: T,
@@ -19,13 +21,15 @@ where
     }
 }
 
-pub trait Packet: Sized + 'static {
-    type Kind: Hash + Eq + PartialEq + Sized + Send + Sync;
+pub trait Packet: Sized + 'static + From<Heartbeat> + Writable<speedy::LittleEndian> {
+    type Kind: Hash + Eq + PartialEq + Sized + Send + Sync + std::fmt::Debug;
     type Sender: AnyPacketHandler<Self> + Sync + Send;
+    type OtherPacket: Packet;
 }
 
 pub use client_packet_enum::*;
 pub use server_packet_enum::*;
+use tracing::trace;
 
 use super::mediator::AnyPacketHandler;
 
@@ -41,13 +45,18 @@ mod client_packet_enum {
     #[enum_kind(ClientPacketKind, derive(Hash))]
     pub enum ClientPacket {
         SendMessage(SendMessage),
+        Heartbeat(Heartbeat),
     }
 
     impl Packet for ClientPacket {
         type Kind = ClientPacketKind;
+        type OtherPacket = ServerPacket;
         type Sender = ClientPacketSender;
     }
 }
+
+#[derive(Readable, Writable, Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+pub struct Heartbeat;
 
 #[proxy_enum::proxy(ServerPacket)]
 mod server_packet_enum {
@@ -62,9 +71,11 @@ mod server_packet_enum {
     pub enum ServerPacket {
         MessageReceived(MessageReceived),
         AcceptConnection(AcceptConnection),
+        Heartbeat(Heartbeat),
     }
     impl Packet for ServerPacket {
         type Kind = ServerPacketKind;
+        type OtherPacket = ClientPacket;
         type Sender = ServerPacketSender;
     }
 }
@@ -80,15 +91,17 @@ pub struct EncodedPacket {
 }
 
 impl EncodedPacket {
-    pub fn try_encode<T>(packet: T) -> Result<Self, anyhow::Error>
+    pub fn try_encode<T, P>(packet: T) -> Result<Self>
     where
-        T: Writable<speedy::LittleEndian>,
+        P: Packet + From<T> + Writable<speedy::LittleEndian>,
     {
-        let length = Writable::<speedy::LittleEndian>::bytes_needed(&packet)?;
+        let p = P::from(packet);
+        let length = Writable::<speedy::LittleEndian>::bytes_needed(&p)?;
+        trace!("Writing packet requiring length: {}", length);
         let mut bytes: Vec<u8> = vec![0; length + 4];
         (&mut bytes[..4]).write_all(&u32::to_le_bytes(length as u32))?;
 
-        packet.write_to_buffer(&mut bytes[4..])?;
+        p.write_to_buffer(&mut bytes[4..])?;
 
         Ok(Self {
             bytes: bytes.into(),

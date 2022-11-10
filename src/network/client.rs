@@ -1,11 +1,11 @@
 use std::net::SocketAddr;
 
-use anyhow::bail;
 use crossbeam_channel::Receiver;
 use tokio::sync::mpsc;
 
 use super::{
-    accept::TcpConnector,
+    accept::QuicConnector,
+    error::{Error, Result},
     mediator::{NetworkEvent, PacketSenderMap},
     packet::{ClientPacket, EncodedPacket, ServerPacket},
     shared::NetworkBase,
@@ -24,7 +24,7 @@ impl NetworkClient {
     pub fn new(map: PacketSenderMap<ServerPacket>) -> Self {
         let (sender, events) = crossbeam_channel::unbounded();
         let (connect_to, connect_to_rx) = mpsc::channel(1);
-        let connector = TcpConnector::new(connect_to_rx);
+        let connector = QuicConnector::new(connect_to_rx);
         let base = NetworkBase::new(map, connector, sender);
 
         Self {
@@ -35,8 +35,10 @@ impl NetworkClient {
         }
     }
 
-    pub fn connect(&self, addr: SocketAddr) -> Result<(), anyhow::Error> {
-        self.connect_to.try_send(addr)?;
+    pub fn connect(&self, addr: SocketAddr) -> Result<()> {
+        self.connect_to
+            .try_send(addr)
+            .map_err(|_| Error::Generic("Channel is unexpectdly closed".to_owned()))?;
         Ok(())
     }
 
@@ -44,18 +46,19 @@ impl NetworkClient {
         self.server.is_some()
     }
 
-    pub fn send<T>(&self, packet: T) -> Result<(), anyhow::Error>
+    pub fn send<T>(&self, packet: T) -> Result<()>
     where
         ClientPacket: From<T>,
     {
         let sender = match &self.server {
             Some(sender) => &sender.0,
-            None => bail!("Not yet connected to server"),
+            None => return Err(Error::Generic("Not yet connected to server".to_owned())),
         };
-        let packet = ClientPacket::from(packet);
-        let encoded_packet = EncodedPacket::try_encode(packet)?;
+        let encoded_packet = EncodedPacket::try_encode::<T, ClientPacket>(packet)?;
 
-        sender.send(encoded_packet)?;
+        sender
+            .send(encoded_packet)
+            .map_err(|_| Error::Generic("Channel is unexpectdly closed".to_owned()))?;
 
         Ok(())
     }

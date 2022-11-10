@@ -1,6 +1,7 @@
 pub mod accept;
 pub mod client;
 pub mod connection;
+pub mod error;
 pub mod mediator;
 pub mod packet;
 pub mod server;
@@ -42,7 +43,7 @@ mod tests {
         network::{
             client::NetworkClient,
             mediator::{PacketSenderMap, PacketWithConnId},
-            packet::{AcceptConnection, ClientPacket, ServerPacket},
+            packet::{AcceptConnection, ClientPacket, Heartbeat, ServerPacket},
             server::NetworkServer,
             test_utils::next_local_addr,
         },
@@ -54,11 +55,16 @@ mod tests {
     async fn run_client_and_server() {
         tokio::task::spawn_blocking(move || {
             let mut client_map = PacketSenderMap::<ServerPacket>(HashMap::new());
+            let (client_tx, _client_rx) = crossbeam_channel::unbounded::<Heartbeat>();
+            client_map.add(client_tx);
             let (client_tx, _client_rx) = crossbeam_channel::unbounded::<AcceptConnection>();
             client_map.add(client_tx);
             let (client_tx, client_rx) = crossbeam_channel::unbounded::<MessageReceived>();
             client_map.add(client_tx);
             let mut server_map = PacketSenderMap::<ClientPacket>(HashMap::new());
+            let (server_tx, _server_rx) =
+                crossbeam_channel::unbounded::<PacketWithConnId<Heartbeat>>();
+            server_map.add(server_tx);
             let (server_tx, server_rx) =
                 crossbeam_channel::unbounded::<PacketWithConnId<SendMessage>>();
             server_map.add(server_tx);

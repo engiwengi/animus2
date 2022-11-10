@@ -4,12 +4,16 @@ use crossbeam_channel::Sender;
 use derive_more::{Deref, DerefMut};
 use tracing::trace;
 
-use super::packet::{
-    AnyPacketWithConnId, ClientPacket, ClientPacketKind, Packet, ServerPacket, ServerPacketKind,
+use super::{
+    error::Result,
+    packet::{
+        AnyPacketWithConnId, ClientPacket, ClientPacketKind, Packet, ServerPacket, ServerPacketKind,
+    },
 };
+use crate::network::error::Error;
 
 pub trait Mediator<T> {
-    fn raise(&self, event: T) -> Result<(), anyhow::Error>;
+    fn raise(&self, event: T) -> Result<()>;
 }
 
 #[derive(Clone)]
@@ -28,12 +32,15 @@ where
         Self { packet_senders }
     }
 
-    pub fn send<'a>(&'a self, packet: AnyPacketWithConnId<P>) -> Result<(), anyhow::Error>
+    pub fn send<'a>(&'a self, packet: AnyPacketWithConnId<P>) -> Result<()>
     where
         P::Kind: for<'b> From<&'b P>,
     {
         let packet_kind = packet.packet_kind();
-        let sender = self.packet_senders.get(&packet_kind).unwrap();
+        let sender = self
+            .packet_senders
+            .get(&packet_kind)
+            .unwrap_or_else(|| panic!("{:?} not added to packet sender map", packet_kind));
         sender.handle(packet)
     }
 }
@@ -81,15 +88,12 @@ mod client_packet_sender_enum {
     #[derive(Debug, TryInto)]
     pub enum ClientPacketSender {
         SendMessage(Sender::<PacketWithConnId<SendMessage>>),
+        Heartbeat(Sender::<PacketWithConnId<Heartbeat>>),
     }
 
     impl ClientPacketSender {
         #[implement]
-        pub fn handle(
-            &self,
-            any_packet: AnyPacketWithConnId<ClientPacket>,
-        ) -> Result<(), anyhow::Error> {
-        }
+        pub fn handle(&self, any_packet: AnyPacketWithConnId<ClientPacket>) -> Result<()> {}
     }
 }
 
@@ -97,12 +101,13 @@ impl From<&ClientPacketSender> for ClientPacketKind {
     fn from(value: &ClientPacketSender) -> Self {
         match value {
             ClientPacketSender::SendMessage(_) => ClientPacketKind::SendMessage,
+            ClientPacketSender::Heartbeat(_) => ClientPacketKind::Heartbeat,
         }
     }
 }
 
 impl AnyPacketHandler<ClientPacket> for ClientPacketSender {
-    fn handle(&self, any_packet: AnyPacketWithConnId<ClientPacket>) -> Result<(), anyhow::Error> {
+    fn handle(&self, any_packet: AnyPacketWithConnId<ClientPacket>) -> Result<()> {
         ClientPacketSender::handle(self, any_packet)
     }
 }
@@ -118,15 +123,12 @@ mod server_packet_sender_enum {
     pub enum ServerPacketSender {
         MessageReceived(Sender::<MessageReceived>),
         AcceptConnection(Sender::<AcceptConnection>),
+        Heartbeat(Sender::<Heartbeat>),
     }
 
     impl ServerPacketSender {
         #[implement]
-        pub fn handle(
-            &self,
-            any_packet: AnyPacketWithConnId<ServerPacket>,
-        ) -> Result<(), anyhow::Error> {
-        }
+        pub fn handle(&self, any_packet: AnyPacketWithConnId<ServerPacket>) -> Result<()> {}
     }
 }
 
@@ -135,18 +137,19 @@ impl From<&ServerPacketSender> for ServerPacketKind {
         match value {
             ServerPacketSender::MessageReceived(_) => ServerPacketKind::MessageReceived,
             ServerPacketSender::AcceptConnection(_) => ServerPacketKind::AcceptConnection,
+            ServerPacketSender::Heartbeat(_) => ServerPacketKind::Heartbeat,
         }
     }
 }
 
 impl AnyPacketHandler<ServerPacket> for ServerPacketSender {
-    fn handle(&self, any_packet: AnyPacketWithConnId<ServerPacket>) -> Result<(), anyhow::Error> {
+    fn handle(&self, any_packet: AnyPacketWithConnId<ServerPacket>) -> Result<()> {
         ServerPacketSender::handle(self, any_packet)
     }
 }
 
 pub trait AnyPacketHandler<P> {
-    fn handle(&self, any_packet: AnyPacketWithConnId<P>) -> Result<(), anyhow::Error>;
+    fn handle(&self, any_packet: AnyPacketWithConnId<P>) -> Result<()>;
 }
 
 #[derive(Debug)]
@@ -160,7 +163,7 @@ where
     T: Into<Self::Kind> + TryFrom<Self::Kind>,
 {
     type Kind;
-    fn handle(&self, any_packet: AnyPacketWithConnId<Self::Kind>) -> Result<(), anyhow::Error>;
+    fn handle(&self, any_packet: AnyPacketWithConnId<Self::Kind>) -> Result<()>;
 }
 
 impl<T> PacketHandler<T> for Sender<PacketWithConnId<T>>
@@ -170,7 +173,7 @@ where
 {
     type Kind = ClientPacket;
 
-    fn handle(&self, any_packet: AnyPacketWithConnId<ClientPacket>) -> Result<(), anyhow::Error> {
+    fn handle(&self, any_packet: AnyPacketWithConnId<ClientPacket>) -> Result<()> {
         let message_name = any_packet.packet_kind();
         // Cannot happen since packet type must be in both sender and anypacket enum
         let packet = TryInto::<T>::try_into(any_packet.packet).unwrap();
@@ -179,7 +182,7 @@ where
             packet,
             connection_id: any_packet.connection_id,
         })
-        .map_err(|_| anyhow::anyhow!("Sender unexpectedly closed"))
+        .map_err(|_| Error::Generic("Sender unexpectedly closed".to_owned()))
     }
 }
 
@@ -190,12 +193,12 @@ where
 {
     type Kind = ServerPacket;
 
-    fn handle(&self, any_packet: AnyPacketWithConnId<ServerPacket>) -> Result<(), anyhow::Error> {
+    fn handle(&self, any_packet: AnyPacketWithConnId<ServerPacket>) -> Result<()> {
         let message_name = any_packet.packet_kind();
         // Cannot happen since packet type must be in both sender and anypacket enum
         let packet = TryInto::<T>::try_into(any_packet.packet).unwrap();
         trace!("Mediating packet type: {:?}", message_name);
         self.send(packet)
-            .map_err(|_| anyhow::anyhow!("Sender unexpectedly closed"))
+            .map_err(|_| Error::Generic("Sender unexpectedly closed".to_owned()))
     }
 }

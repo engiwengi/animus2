@@ -42,6 +42,7 @@ mod tests {
     };
 
     use rstest::rstest;
+    use tracing::info;
     use tracing_test::traced_test;
 
     use super::*;
@@ -50,7 +51,7 @@ mod tests {
         network::{
             client::NetworkClient,
             mediator::{PacketSenderMap, PacketWithConnId},
-            packet::{AcceptConnection, ClientPacket, ServerPacket},
+            packet::{AcceptConnection, ClientPacket, Heartbeat, ServerPacket},
             server::NetworkServer,
             test_utils::next_local_addr,
         },
@@ -58,22 +59,29 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    #[timeout(Duration::from_secs(1))]
+    #[timeout(Duration::from_secs(5))]
     #[traced_test]
     async fn run_client_and_server() {
         let mut client_map = PacketSenderMap::<ServerPacket>(HashMap::new());
+        let (client_tx, _client_rx) = crossbeam_channel::unbounded::<Heartbeat>();
+        client_map.add(client_tx);
         let (client_tx, _client_rx) = crossbeam_channel::unbounded::<AcceptConnection>();
         client_map.add(client_tx);
         let (client_tx, client_rx_recv) = crossbeam_channel::unbounded::<MessageReceived>();
         client_map.add(client_tx);
 
         let mut client2_map = PacketSenderMap::<ServerPacket>(HashMap::new());
+        let (client_tx, _client_rx) = crossbeam_channel::unbounded::<Heartbeat>();
+        client2_map.add(client_tx);
         let (client_tx, _client_rx) = crossbeam_channel::unbounded::<AcceptConnection>();
         client2_map.add(client_tx);
         let (client2_tx, client2_rx_recv) = crossbeam_channel::unbounded::<MessageReceived>();
         client2_map.add(client2_tx);
 
         let mut server_map = PacketSenderMap::<ClientPacket>(HashMap::new());
+        let (server_tx, _server_rx_send) =
+            crossbeam_channel::unbounded::<PacketWithConnId<Heartbeat>>();
+        server_map.add(server_tx);
         let (server_tx, server_rx_send) =
             crossbeam_channel::unbounded::<PacketWithConnId<SendMessage>>();
         server_map.add(server_tx);
@@ -158,6 +166,8 @@ mod tests {
 
         assert_eq!(chat.messages.len(), 2);
         assert_eq!(chat2.messages.len(), 2);
+
+        info!("dropping");
 
         std::mem::drop(client);
         std::mem::drop(client2);

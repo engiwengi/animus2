@@ -8,13 +8,21 @@ use animus_lib::{
     network::{
         client::NetworkClient,
         mediator::PacketSenderMap,
-        packet::{AcceptConnection, ServerPacket},
+        packet::{AcceptConnection, Heartbeat, ServerPacket},
     },
 };
+use tracing::Level;
+use tracing_subscriber::{filter::Targets, FmtSubscriber};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
+    let _filter = Targets::new().with_target("animus2", Level::TRACE);
+    let subscriber = FmtSubscriber::builder().finish();
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+
     let mut client_map = PacketSenderMap::<ServerPacket>(HashMap::new());
+    let (client_tx, _client_rx) = crossbeam_channel::unbounded::<Heartbeat>();
+    client_map.add(client_tx);
     let (client_tx, _client_rx) = crossbeam_channel::unbounded::<AcceptConnection>();
     client_map.add(client_tx);
     let (client_tx, client_rx) = crossbeam_channel::unbounded::<MessageReceived>();

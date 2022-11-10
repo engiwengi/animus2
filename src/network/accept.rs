@@ -1,13 +1,16 @@
 use std::{
     io::ErrorKind,
+    net::SocketAddr,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
 
 use futures::{Future, FutureExt};
+use quinn::{Endpoint, ServerConfig};
 use tokio::{
-    net::{TcpListener, TcpStream, ToSocketAddrs},
+    net::TcpListener,
     sync::{mpsc, oneshot},
 };
 
@@ -35,34 +38,116 @@ pub trait AsyncAccept {
 }
 
 impl AsyncAccept for TcpListener {
-    type Connection = TcpStream;
+    type Connection = tokio::net::TcpStream;
 
-    fn poll_accept(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<TcpStream>> {
+    fn poll_accept(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<std::io::Result<tokio::net::TcpStream>> {
         TcpListener::poll_accept(&self, cx).map(|f| f.map(|t| t.0))
     }
 }
-
-pub struct TcpConnector<T: ToSocketAddrs + Send + 'static> {
-    connect_to: mpsc::Receiver<T>,
-    stream_rx: Option<oneshot::Receiver<std::io::Result<TcpStream>>>,
+pub struct QuicListener {
+    stream_rx: Option<oneshot::Receiver<std::io::Result<quinn::Connection>>>,
+    endpoint: Endpoint,
 }
+fn generate_self_signed_cert(
+) -> Result<(rustls::Certificate, rustls::PrivateKey), Box<dyn std::error::Error>> {
+    let cert = rcgen::generate_simple_self_signed(vec!["test".to_string()])?;
+    let key = rustls::PrivateKey(cert.serialize_private_key_der());
+    Ok((rustls::Certificate(cert.serialize_der()?), key))
+}
+impl QuicListener {
+    pub fn new(addr: SocketAddr) -> Self {
+        let (cert, key) = generate_self_signed_cert().unwrap();
+        let server_config = rustls::ServerConfig::builder()
+            .with_safe_defaults()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert], key)
+            .unwrap();
 
-impl<T: ToSocketAddrs + Send + 'static> TcpConnector<T> {
-    pub fn new(connect_to: mpsc::Receiver<T>) -> Self {
         Self {
-            connect_to,
             stream_rx: None,
+            endpoint: Endpoint::server(ServerConfig::with_crypto(Arc::new(server_config)), addr)
+                .unwrap(),
         }
     }
 }
-
-impl<T: ToSocketAddrs + Send + 'static + Clone> AsyncAccept for TcpConnector<T> {
-    type Connection = TcpStream;
+impl AsyncAccept for QuicListener {
+    type Connection = quinn::Connection;
 
     fn poll_accept(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<std::io::Result<TcpStream>> {
+    ) -> Poll<std::io::Result<quinn::Connection>> {
+        {
+            if let Some(stream_rx) = &mut self.stream_rx {
+                // unwrap is fine here since the oneshot is known to never drop without sending
+                let stream = futures::ready!(stream_rx.poll_unpin(cx).map(|e| e.unwrap()));
+                let _ = self.stream_rx.take();
+                return Poll::Ready(stream);
+            }
+
+            let waker = cx.waker().clone();
+            let (tx, rx) = oneshot::channel();
+            self.stream_rx = Some(rx);
+
+            let endpoint = self.endpoint.clone();
+
+            // TODO: Is there a better way to do this?
+            tokio::task::spawn(async move {
+                loop {
+                    let stream = endpoint.accept().await;
+                    if stream.is_none() {
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                    let stream = stream.unwrap().await;
+                    if stream.is_err() {
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                    let _ = tx.send(stream.map_err(|err| err.into()));
+                    waker.wake();
+                    break;
+                }
+            });
+
+            Poll::Pending
+        }
+    }
+}
+
+pub struct QuicConnector {
+    connect_to: mpsc::Receiver<SocketAddr>,
+    stream_rx: Option<oneshot::Receiver<std::io::Result<quinn::Connection>>>,
+    pub endpoint: Endpoint,
+}
+
+impl QuicConnector {
+    pub fn new(connect_to: mpsc::Receiver<SocketAddr>) -> Self {
+        // TODO should not do this
+        let crypto = rustls::ClientConfig::builder()
+            .with_safe_defaults()
+            .with_custom_certificate_verifier(SkipServerVerification::new())
+            .with_no_client_auth();
+        let mut endpoint = Endpoint::client("0.0.0.0:0".parse().unwrap()).unwrap();
+        endpoint.set_default_client_config(quinn::ClientConfig::new(Arc::new(crypto)));
+        Self {
+            connect_to,
+            stream_rx: None,
+            endpoint,
+        }
+    }
+}
+
+impl AsyncAccept for QuicConnector {
+    type Connection = quinn::Connection;
+
+    fn poll_accept(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<std::io::Result<quinn::Connection>> {
         if let Some(stream_rx) = &mut self.stream_rx {
             // unwrap is fine here since the oneshot is known to never drop without sending
             let stream = futures::ready!(stream_rx.poll_unpin(cx).map(|e| e.unwrap()));
@@ -76,18 +161,25 @@ impl<T: ToSocketAddrs + Send + 'static + Clone> AsyncAccept for TcpConnector<T> 
                 let (tx, rx) = oneshot::channel();
                 self.stream_rx = Some(rx);
 
+                let endpoint = self.endpoint.clone();
+
                 // TODO: Is there a better way to do this?
                 tokio::task::spawn(async move {
                     loop {
-                        let addrx = addr.clone();
-                        let stream = TcpStream::connect(addrx).await;
+                        let addrx = addr;
+                        let stream = endpoint.connect(addrx, "test");
                         if stream.is_err() {
                             tokio::time::sleep(Duration::from_secs(1)).await;
-                        } else {
-                            let _ = tx.send(stream);
-                            waker.wake();
-                            break;
+                            continue;
                         }
+                        let stream = stream.unwrap().await;
+                        if stream.is_err() {
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                            continue;
+                        }
+                        let _ = tx.send(stream.map_err(|err| err.into()));
+                        waker.wake();
+                        break;
                     }
                 });
 
@@ -105,3 +197,65 @@ pub trait AsyncAcceptExt: AsyncAccept {
 }
 
 impl<T> AsyncAcceptExt for T where T: AsyncAccept {}
+
+struct SkipServerVerification;
+
+impl SkipServerVerification {
+    fn new() -> Arc<Self> {
+        Arc::new(Self)
+    }
+}
+
+impl rustls::client::ServerCertVerifier for SkipServerVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::Certificate,
+        _intermediates: &[rustls::Certificate],
+        _server_name: &rustls::ServerName,
+        _scts: &mut dyn Iterator<Item = &[u8]>,
+        _ocsp_response: &[u8],
+        _now: std::time::SystemTime,
+    ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::ServerCertVerified::assertion())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use rstest::rstest;
+    use tracing_test::traced_test;
+
+    use super::*;
+    use crate::network::test_utils::next_local_addr;
+
+    #[rstest]
+    #[timeout(Duration::from_secs(5))]
+    #[tokio::test]
+    #[traced_test]
+    async fn server_and_client() {
+        let addr = next_local_addr();
+
+        // server
+        let addrx = addr.clone();
+        let server = tokio::task::spawn(async move {
+            let mut server = QuicListener::new(addrx.parse().unwrap());
+            let _conn = server.accept().await.unwrap();
+        });
+
+        // client
+        let (s, r) = mpsc::channel(1);
+        let client = tokio::task::spawn(async move {
+            let mut client = QuicConnector::new(r);
+
+            let _conn = client.accept().await.unwrap();
+        });
+
+        s.send(addr.parse().unwrap()).await.unwrap();
+
+        let (a, b) = futures::join!(client, server);
+        a.unwrap();
+        b.unwrap();
+    }
+}
