@@ -41,7 +41,7 @@ where
         Ok(length)
     }
 
-    pub async fn next<'d, 'a, P>(&'a mut self) -> Result<P, std::io::Error>
+    pub async fn next<'d, P>(&mut self) -> Result<P, std::io::Error>
     where
         P: Packet + Readable<'d, speedy::LittleEndian>,
     {

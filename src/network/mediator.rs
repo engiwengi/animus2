@@ -1,8 +1,8 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 use crossbeam_channel::Sender;
 use derive_more::{Deref, DerefMut};
-use tracing::trace;
+use tracing::info;
 
 use super::{
     error::Result,
@@ -60,10 +60,7 @@ where
         P::Kind: for<'a> From<&'a P::Sender>,
     {
         let s = P::Sender::try_from(sender).unwrap_or_else(|_| {
-            panic!(
-                "{} not yet added to packet senders",
-                std::any::type_name::<P>()
-            )
+            panic!("{} not added to packet senders", std::any::type_name::<P>())
         });
         self.0.insert((&s).into(), s);
     }
@@ -88,7 +85,7 @@ mod client_packet_sender_enum {
     #[derive(Debug, TryInto)]
     pub enum ClientPacketSender {
         SendMessage(Sender::<PacketWithConnId<SendMessage>>),
-        Heartbeat(Sender::<PacketWithConnId<Heartbeat>>),
+        Heartbeat(NullSink::<ClientPacket, Heartbeat>),
     }
 
     impl ClientPacketSender {
@@ -123,7 +120,7 @@ mod server_packet_sender_enum {
     pub enum ServerPacketSender {
         MessageReceived(Sender::<MessageReceived>),
         AcceptConnection(Sender::<AcceptConnection>),
-        Heartbeat(Sender::<Heartbeat>),
+        Heartbeat(NullSink::<ServerPacket, Heartbeat>),
     }
 
     impl ServerPacketSender {
@@ -175,14 +172,30 @@ where
 
     fn handle(&self, any_packet: AnyPacketWithConnId<ClientPacket>) -> Result<()> {
         let message_name = any_packet.packet_kind();
-        // Cannot happen since packet type must be in both sender and anypacket enum
-        let packet = TryInto::<T>::try_into(any_packet.packet).unwrap();
-        trace!("Mediating packet type: {:?}", message_name);
+        let packet = TryInto::<T>::try_into(any_packet.packet)
+            .expect("Packet kind must be in both sender and any packet enum");
+
+        info!("Mediating packet kind: {:?}", message_name);
+
         self.send(PacketWithConnId {
             packet,
             connection_id: any_packet.connection_id,
         })
         .map_err(|_| Error::Generic("Sender unexpectedly closed".to_owned()))
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct NullSink<P, T>(pub PhantomData<(P, T)>);
+
+impl<T, P> PacketHandler<T> for NullSink<P, T>
+where
+    T: Into<P> + TryFrom<P>,
+{
+    type Kind = P;
+
+    fn handle(&self, _any_packet: AnyPacketWithConnId<P>) -> Result<()> {
+        Ok(())
     }
 }
 
@@ -196,8 +209,11 @@ where
     fn handle(&self, any_packet: AnyPacketWithConnId<ServerPacket>) -> Result<()> {
         let message_name = any_packet.packet_kind();
         // Cannot happen since packet type must be in both sender and anypacket enum
-        let packet = TryInto::<T>::try_into(any_packet.packet).unwrap();
-        trace!("Mediating packet type: {:?}", message_name);
+        let packet = TryInto::<T>::try_into(any_packet.packet)
+            .expect("Packet kind must be in both sender and any packet enum");
+
+        info!("Mediating packet kind: {:?}", message_name);
+
         self.send(packet)
             .map_err(|_| Error::Generic("Sender unexpectedly closed".to_owned()))
     }

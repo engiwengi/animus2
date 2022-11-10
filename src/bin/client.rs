@@ -7,7 +7,7 @@ use animus_lib::{
     },
     network::{
         client::NetworkClient,
-        mediator::PacketSenderMap,
+        mediator::{NullSink, PacketSenderMap},
         packet::{AcceptConnection, Heartbeat, ServerPacket},
     },
 };
@@ -21,8 +21,10 @@ async fn main() {
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
     let mut client_map = PacketSenderMap::<ServerPacket>(HashMap::new());
-    let (client_tx, _client_rx) = crossbeam_channel::unbounded::<Heartbeat>();
-    client_map.add(client_tx);
+    client_map.0.insert(
+        animus_lib::network::packet::ServerPacketKind::Heartbeat,
+        NullSink::<ServerPacket, Heartbeat>(Default::default()).into(),
+    );
     let (client_tx, _client_rx) = crossbeam_channel::unbounded::<AcceptConnection>();
     client_map.add(client_tx);
     let (client_tx, client_rx) = crossbeam_channel::unbounded::<MessageReceived>();

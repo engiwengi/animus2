@@ -42,8 +42,11 @@ mod tests {
         id::NetworkId,
         network::{
             client::NetworkClient,
-            mediator::{PacketSenderMap, PacketWithConnId},
-            packet::{AcceptConnection, ClientPacket, Heartbeat, ServerPacket},
+            mediator::{NullSink, PacketSenderMap, PacketWithConnId},
+            packet::{
+                AcceptConnection, ClientPacket, ClientPacketKind, Heartbeat, ServerPacket,
+                ServerPacketKind,
+            },
             server::NetworkServer,
             test_utils::next_local_addr,
         },
@@ -55,16 +58,19 @@ mod tests {
     async fn run_client_and_server() {
         tokio::task::spawn_blocking(move || {
             let mut client_map = PacketSenderMap::<ServerPacket>(HashMap::new());
-            let (client_tx, _client_rx) = crossbeam_channel::unbounded::<Heartbeat>();
-            client_map.add(client_tx);
+            client_map.0.insert(
+                ServerPacketKind::Heartbeat,
+                NullSink::<ServerPacket, Heartbeat>(Default::default()).into(),
+            );
             let (client_tx, _client_rx) = crossbeam_channel::unbounded::<AcceptConnection>();
             client_map.add(client_tx);
             let (client_tx, client_rx) = crossbeam_channel::unbounded::<MessageReceived>();
             client_map.add(client_tx);
             let mut server_map = PacketSenderMap::<ClientPacket>(HashMap::new());
-            let (server_tx, _server_rx) =
-                crossbeam_channel::unbounded::<PacketWithConnId<Heartbeat>>();
-            server_map.add(server_tx);
+            server_map.0.insert(
+                ClientPacketKind::Heartbeat,
+                NullSink::<ClientPacket, Heartbeat>(Default::default()).into(),
+            );
             let (server_tx, server_rx) =
                 crossbeam_channel::unbounded::<PacketWithConnId<SendMessage>>();
             server_map.add(server_tx);

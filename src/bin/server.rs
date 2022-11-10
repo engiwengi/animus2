@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use animus_lib::{
     chat::{packet::SendMessage, system::broadcast_shouts_to_all_clients},
     network::{
-        mediator::{PacketSenderMap, PacketWithConnId},
+        mediator::{NullSink, PacketSenderMap, PacketWithConnId},
         packet::{ClientPacket, Heartbeat},
         server::NetworkServer,
     },
@@ -17,8 +17,10 @@ async fn main() {
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
     let mut server_map = PacketSenderMap::<ClientPacket>(HashMap::new());
-    let (server_tx, _server_rx) = crossbeam_channel::unbounded::<PacketWithConnId<Heartbeat>>();
-    server_map.add(server_tx);
+    server_map.0.insert(
+        animus_lib::network::packet::ClientPacketKind::Heartbeat,
+        NullSink::<ClientPacket, Heartbeat>(Default::default()).into(),
+    );
     let (server_tx, server_rx) = crossbeam_channel::unbounded::<PacketWithConnId<SendMessage>>();
     server_map.add(server_tx);
     let addr = "127.0.0.1:56565";

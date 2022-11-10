@@ -50,7 +50,7 @@ mod tests {
         chat::packet::{MessageReceived, SendMessage},
         network::{
             client::NetworkClient,
-            mediator::{PacketSenderMap, PacketWithConnId},
+            mediator::{NullSink, PacketSenderMap, PacketWithConnId},
             packet::{AcceptConnection, ClientPacket, Heartbeat, ServerPacket},
             server::NetworkServer,
             test_utils::next_local_addr,
@@ -63,25 +63,30 @@ mod tests {
     #[traced_test]
     async fn run_client_and_server() {
         let mut client_map = PacketSenderMap::<ServerPacket>(HashMap::new());
-        let (client_tx, _client_rx) = crossbeam_channel::unbounded::<Heartbeat>();
-        client_map.add(client_tx);
+        client_map.0.insert(
+            crate::network::packet::ServerPacketKind::Heartbeat,
+            NullSink::<ServerPacket, Heartbeat>(Default::default()).into(),
+        );
         let (client_tx, _client_rx) = crossbeam_channel::unbounded::<AcceptConnection>();
         client_map.add(client_tx);
         let (client_tx, client_rx_recv) = crossbeam_channel::unbounded::<MessageReceived>();
         client_map.add(client_tx);
 
         let mut client2_map = PacketSenderMap::<ServerPacket>(HashMap::new());
-        let (client_tx, _client_rx) = crossbeam_channel::unbounded::<Heartbeat>();
-        client2_map.add(client_tx);
+        client2_map.0.insert(
+            crate::network::packet::ServerPacketKind::Heartbeat,
+            NullSink::<ServerPacket, Heartbeat>(Default::default()).into(),
+        );
         let (client_tx, _client_rx) = crossbeam_channel::unbounded::<AcceptConnection>();
         client2_map.add(client_tx);
         let (client2_tx, client2_rx_recv) = crossbeam_channel::unbounded::<MessageReceived>();
         client2_map.add(client2_tx);
 
         let mut server_map = PacketSenderMap::<ClientPacket>(HashMap::new());
-        let (server_tx, _server_rx_send) =
-            crossbeam_channel::unbounded::<PacketWithConnId<Heartbeat>>();
-        server_map.add(server_tx);
+        server_map.0.insert(
+            crate::network::packet::ClientPacketKind::Heartbeat,
+            NullSink::<ClientPacket, Heartbeat>(Default::default()).into(),
+        );
         let (server_tx, server_rx_send) =
             crossbeam_channel::unbounded::<PacketWithConnId<SendMessage>>();
         server_map.add(server_tx);

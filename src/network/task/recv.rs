@@ -53,24 +53,27 @@ where
                         error!("Failed to receive packet length: {}", e);
                         break;
                     }
-
-                    let packet = match self.socket.next().await {
-                        Ok(packet) => packet,
-                        Err(e) => {
-                            error!("Failed to receive packet: {}", e);
-                            break;
-                        }
-                    };
-
-                    let packet_with_conn_id = AnyPacketWithConnId { packet, connection_id: self.connection_id };
-                    if let Err(e) = self.packet_mediator.send(packet_with_conn_id) {
-                        error!("Failed to mediate packet: {}", e);
-                        break;
-                    }
                 },
                 _ = disconnect => break,
                 _ = stop => break,
             };
+
+            let packet = match self.socket.next().await {
+                Ok(packet) => packet,
+                Err(e) => {
+                    error!("Failed to receive packet: {}", e);
+                    break;
+                }
+            };
+
+            let packet_with_conn_id = AnyPacketWithConnId {
+                packet,
+                connection_id: self.connection_id,
+            };
+            if let Err(e) = self.packet_mediator.send(packet_with_conn_id) {
+                error!("Failed to mediate packet: {}", e);
+                break;
+            }
         }
         let _ = disconnect_broadcast.notify.send(());
         info!("Disconnecting receive packets task: {}", self.connection_id);

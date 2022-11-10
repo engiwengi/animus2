@@ -55,7 +55,7 @@ mod client_packet_enum {
     }
 }
 
-#[derive(Readable, Writable, Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Readable, Writable, Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Default)]
 pub struct Heartbeat;
 
 #[proxy_enum::proxy(ServerPacket)]
