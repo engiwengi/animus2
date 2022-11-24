@@ -1,5 +1,6 @@
 use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
+use bevy::prelude::Resource;
 use crossbeam_channel::Sender;
 use derive_more::{Deref, DerefMut};
 use tracing::info;
@@ -7,21 +8,33 @@ use tracing::info;
 use super::{
     error::Result,
     packet::{
-        AnyPacketWithConnId, ClientPacket, ClientPacketKind, Packet, ServerPacket, ServerPacketKind,
+        AnyPacketWithConnId, ClientPacket, ClientPacketKind, Heartbeat, Packet, ServerPacket,
+        ServerPacketKind,
     },
 };
-use crate::network::error::Error;
+use crate::{id::NetworkId, network::error::Error};
 
 pub trait Mediator<T> {
     fn raise(&self, event: T) -> Result<()>;
 }
 
-#[derive(Clone)]
+#[derive(Resource, Debug)]
 pub struct AnyPacketMediator<P>
 where
     P: Packet,
 {
     packet_senders: Arc<PacketSenderMap<P>>,
+}
+
+impl<P> Clone for AnyPacketMediator<P>
+where
+    P: Packet,
+{
+    fn clone(&self) -> Self {
+        Self {
+            packet_senders: Arc::clone(&self.packet_senders),
+        }
+    }
 }
 
 impl<P> AnyPacketMediator<P>
@@ -45,10 +58,25 @@ where
     }
 }
 
-#[derive(Deref, DerefMut, Default)]
+#[derive(Deref, DerefMut, Resource, Debug)]
 pub struct PacketSenderMap<P>(pub HashMap<P::Kind, P::Sender>)
 where
     P: Packet;
+
+impl<P> Default for PacketSenderMap<P>
+where
+    P: Packet,
+    for<'a> <P as Packet>::Kind: From<&'a <P as Packet>::Sender>,
+    P::Sender: TryFrom<NullSink<P, Heartbeat>>,
+{
+    fn default() -> Self {
+        let mut s = Self(Default::default());
+
+        s.add(NullSink::<P, Heartbeat>::default());
+
+        s
+    }
+}
 
 impl<P> PacketSenderMap<P>
 where
@@ -68,7 +96,7 @@ where
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum NetworkEvent {
-    Disconnected { connection_id: u64 },
+    Disconnected { connection_id: NetworkId },
 }
 
 pub use client_packet_sender_enum::*;
@@ -79,12 +107,17 @@ mod client_packet_sender_enum {
     use derive_more::TryInto;
 
     use super::*;
-    use crate::{chat::packet::SendMessage, network::packet::*};
+    use crate::{
+        ambit::packet::QueryEntity, chat::packet::SendMessage, network::packet::*,
+        path::packet::PathTargetRequest,
+    };
 
     #[rustfmt::skip]
     #[derive(Debug, TryInto)]
     pub enum ClientPacketSender {
         SendMessage(Sender::<PacketWithConnId<SendMessage>>),
+        PathTargetRequest(Sender::<PacketWithConnId<PathTargetRequest>>),
+        QueryEntity(Sender::<PacketWithConnId<QueryEntity>>),
         Heartbeat(NullSink::<ClientPacket, Heartbeat>),
     }
 
@@ -98,7 +131,9 @@ impl From<&ClientPacketSender> for ClientPacketKind {
     fn from(value: &ClientPacketSender) -> Self {
         match value {
             ClientPacketSender::SendMessage(_) => ClientPacketKind::SendMessage,
+            ClientPacketSender::PathTargetRequest(_) => ClientPacketKind::PathTargetRequest,
             ClientPacketSender::Heartbeat(_) => ClientPacketKind::Heartbeat,
+            ClientPacketSender::QueryEntity(_) => ClientPacketKind::QueryEntity,
         }
     }
 }
@@ -113,13 +148,21 @@ mod server_packet_sender_enum {
     use derive_more::TryInto;
 
     use super::*;
-    use crate::{chat::packet::MessageReceived, network::packet::*};
+    use crate::{
+        ambit::packet::{DespawnEntity, SpawnEntity},
+        chat::packet::MessageReceived,
+        network::packet::*,
+        path::packet::PathTarget,
+    };
 
     #[rustfmt::skip]
     #[derive(Debug, TryInto)]
     pub enum ServerPacketSender {
         MessageReceived(Sender::<MessageReceived>),
         AcceptConnection(Sender::<AcceptConnection>),
+        PathTarget(Sender::<PathTarget>),
+        SpawnEntity(Sender::<SpawnEntity>),
+        DespawnEntity(Sender::<DespawnEntity>),
         Heartbeat(NullSink::<ServerPacket, Heartbeat>),
     }
 
@@ -135,6 +178,9 @@ impl From<&ServerPacketSender> for ServerPacketKind {
             ServerPacketSender::MessageReceived(_) => ServerPacketKind::MessageReceived,
             ServerPacketSender::AcceptConnection(_) => ServerPacketKind::AcceptConnection,
             ServerPacketSender::Heartbeat(_) => ServerPacketKind::Heartbeat,
+            ServerPacketSender::PathTarget(_) => ServerPacketKind::PathTarget,
+            ServerPacketSender::SpawnEntity(_) => ServerPacketKind::SpawnEntity,
+            ServerPacketSender::DespawnEntity(_) => ServerPacketKind::DespawnEntity,
         }
     }
 }
@@ -149,10 +195,10 @@ pub trait AnyPacketHandler<P> {
     fn handle(&self, any_packet: AnyPacketWithConnId<P>) -> Result<()>;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct PacketWithConnId<T> {
     pub packet: T,
-    pub connection_id: u64,
+    pub connection_id: NetworkId,
 }
 
 trait PacketHandler<T>
@@ -185,8 +231,14 @@ where
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct NullSink<P, T>(pub PhantomData<(P, T)>);
+
+impl<T, P> Default for NullSink<P, T> {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
 
 impl<T, P> PacketHandler<T> for NullSink<P, T>
 where

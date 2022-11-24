@@ -1,7 +1,9 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use derive_more::{Deref, DerefMut};
-use tokio::io::{AsyncRead, AsyncWrite};
+use futures::{AsyncRead, AsyncWrite};
+
+use crate::id::NetworkId;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -14,18 +16,18 @@ pub struct Connection<R> {
     #[deref]
     #[deref_mut]
     pub value: R,
-    connection_id: u64,
+    connection_id: NetworkId,
 }
 
 impl<R> Connection<R> {
     pub fn new(io: R) -> Self {
         Self {
             value: io,
-            connection_id: next_id(),
+            connection_id: NetworkId::from(next_id()),
         }
     }
 
-    pub fn connection_id(&self) -> u64 {
+    pub fn connection_id(&self) -> NetworkId {
         self.connection_id
     }
 
@@ -44,8 +46,8 @@ impl<R: AsyncRead + Unpin> AsyncRead for Connection<R> {
     fn poll_read(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
+        buf: &mut [u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
         AsyncRead::poll_read(std::pin::Pin::new(&mut self.value), cx, buf)
     }
 }
@@ -66,10 +68,10 @@ impl<R: AsyncWrite + Unpin> AsyncWrite for Connection<R> {
         AsyncWrite::poll_flush(std::pin::Pin::new(&mut self.value), cx)
     }
 
-    fn poll_shutdown(
+    fn poll_close(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
-        AsyncWrite::poll_shutdown(std::pin::Pin::new(&mut self.value), cx)
+        AsyncWrite::poll_close(std::pin::Pin::new(&mut self.value), cx)
     }
 }

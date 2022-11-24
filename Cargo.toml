@@ -6,32 +6,46 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+async-std = { version = "1.12.0", features = ["attributes"] }
+async-timer = "0.7.4"
+bevy = "0.9.0"
+bimap = "0.6.2"
 crossbeam-channel = "0.5.6"
 derive_more = "0.99.17"
 enum-kinds = "0.5.1"
 futures = "0.3.25"
+iyes_loopless = "0.9.1"
 proxy-enum = "0.3.1"
-quinn = "0.9.0"
+quinn = { version = "0.9.1", features = [
+  "rustls",
+  "futures-io",
+  "runtime-async-std",
+  "webpki",
+  "native-certs",
+  "tls-rustls",
+], default-features = false }
 rcgen = "0.10.0"
 rustls = { version = "0.20.7", features = ["dangerous_configuration", "quic"] }
-speedy = "0.8.3"
+speedy = "0.8.5"
 thiserror = "1.0.37"
-tokio = { version = "1.21.2", features = ["full"] }
 tracing = "0.1.37"
 tracing-subscriber = "0.3.16"
 
-
 [dev-dependencies]
-anyhow = "1.0.65"
+anyhow = "1.0.66"
 rstest = "0.15.0"
-tokio = { version = "1.21.2", features = ["full", "test-util"] }
-tokio-test = "0.4.2"
 tracing-test = "0.2.3"
 
 [[bin]]
 name = "server"
 path = "src/bin/server.rs"
+required-features = ["server"]
 
 [[bin]]
 name = "client"
 path = "src/bin/client.rs"
+required-features = ["client"]
+
+[features]
+server = []
+client = []

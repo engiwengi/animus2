@@ -19,7 +19,7 @@ pub struct MessageReceived {
 impl From<PacketWithConnId<SendMessage>> for MessageReceived {
     fn from(value: PacketWithConnId<SendMessage>) -> Self {
         Self {
-            sender: NetworkId::from(value.connection_id),
+            sender: value.connection_id,
             contents: value.packet.contents,
             kind: value.packet.kind,
         }

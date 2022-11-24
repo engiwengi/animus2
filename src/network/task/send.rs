@@ -1,14 +1,11 @@
 use std::time::Duration;
 
-use futures::{pin_mut, FutureExt};
-use tokio::{
-    io::AsyncWrite,
-    sync::{mpsc, watch},
-};
+use futures::{pin_mut, AsyncWrite, FutureExt};
 use tracing::{error, info};
 
 use crate::{
     channel::BroadcastChannel,
+    id::NetworkId,
     network::{
         packet::{EncodedPacket, Heartbeat, Packet},
         socket::Socket,
@@ -17,8 +14,8 @@ use crate::{
 
 pub struct SendPacketsTask<W> {
     socket: Socket<W>,
-    queued_packets: mpsc::UnboundedReceiver<EncodedPacket>,
-    connection_id: u64,
+    queued_packets: async_std::channel::Receiver<EncodedPacket>,
+    connection_id: NetworkId,
 }
 
 impl<W> SendPacketsTask<W>
@@ -27,8 +24,8 @@ where
 {
     pub fn new(
         io: W,
-        queued_packets: mpsc::UnboundedReceiver<EncodedPacket>,
-        connection_id: u64,
+        queued_packets: async_std::channel::Receiver<EncodedPacket>,
+        connection_id: NetworkId,
     ) -> Self {
         Self {
             socket: Socket::new(io),
@@ -39,24 +36,24 @@ where
 
     pub async fn _run<P: Packet>(
         mut self,
-        mut stop: watch::Receiver<()>,
-        mut disconnect_broadcast: BroadcastChannel<()>,
+        stop: async_std::channel::Receiver<()>,
+        disconnect_broadcast: BroadcastChannel<()>,
     ) {
-        let stop = stop.changed().fuse();
+        let stop = stop.recv().fuse();
         let disconnect = disconnect_broadcast.notified.recv().fuse();
-        let mut heartbeat = tokio::time::interval(Duration::from_secs(1));
-        heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let heartbeat = async_timer::Interval::platform_new(Duration::from_secs(1));
+        // heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         pin_mut!(stop, disconnect, heartbeat);
 
         loop {
             let packet = futures::select! {
                 maybe_packet = self.queued_packets.recv().fuse() => {
                     match maybe_packet {
-                        Some(packet) => packet,
-                        None => break,
+                        Ok(packet) => packet,
+                        Err(_) => break,
                     }
                 },
-                _ = heartbeat.tick().fuse() => EncodedPacket::try_encode::<Heartbeat, P>(Heartbeat).unwrap(),
+                _ = heartbeat.fuse() => EncodedPacket::try_encode::<Heartbeat, P>(Heartbeat).unwrap(),
                 _ = disconnect => break,
                 _ = stop => break,
             };
@@ -65,7 +62,7 @@ where
                 error!("{}", e);
                 break;
             }
-            heartbeat.reset();
+            // heartbeat.reset();
         }
         let _ = disconnect_broadcast.notify.send(());
         info!("Disconnecting send packets task: {}", self.connection_id);

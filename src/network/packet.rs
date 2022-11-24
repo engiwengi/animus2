@@ -3,9 +3,10 @@ use std::{hash::Hash, io::Write, sync::Arc};
 use speedy::{Readable, Writable};
 
 use super::error::Result;
+use crate::id::NetworkId;
 
 pub struct AnyPacketWithConnId<T> {
-    pub connection_id: u64,
+    pub connection_id: NetworkId,
     pub packet: T,
 }
 
@@ -23,7 +24,7 @@ where
 
 pub trait Packet: Sized + 'static + From<Heartbeat> + Writable<speedy::LittleEndian> {
     type Kind: Hash + Eq + PartialEq + Sized + Send + Sync + std::fmt::Debug;
-    type Sender: AnyPacketHandler<Self> + Sync + Send;
+    type Sender: AnyPacketHandler<Self> + Sync + Send + std::fmt::Debug;
     type OtherPacket: Packet;
 }
 
@@ -39,12 +40,17 @@ mod client_packet_enum {
     use enum_kinds::EnumKind;
 
     use super::*;
-    use crate::{chat::packet::SendMessage, network::mediator::ClientPacketSender};
+    use crate::{
+        ambit::packet::QueryEntity, chat::packet::SendMessage,
+        network::mediator::ClientPacketSender, path::packet::PathTargetRequest,
+    };
 
     #[derive(Readable, Writable, TryInto, Debug, EnumKind)]
     #[enum_kind(ClientPacketKind, derive(Hash))]
     pub enum ClientPacket {
         SendMessage(SendMessage),
+        QueryEntity(QueryEntity),
+        PathTargetRequest(PathTargetRequest),
         Heartbeat(Heartbeat),
     }
 
@@ -64,13 +70,21 @@ mod server_packet_enum {
     use enum_kinds::EnumKind;
 
     use super::*;
-    use crate::{chat::packet::MessageReceived, network::mediator::ServerPacketSender};
+    use crate::{
+        ambit::packet::{DespawnEntity, SpawnEntity},
+        chat::packet::MessageReceived,
+        network::mediator::ServerPacketSender,
+        path::packet::PathTarget,
+    };
 
     #[derive(Readable, Writable, TryInto, Debug, EnumKind)]
     #[enum_kind(ServerPacketKind, derive(Hash))]
     pub enum ServerPacket {
         MessageReceived(MessageReceived),
         AcceptConnection(AcceptConnection),
+        PathTarget(PathTarget),
+        SpawnEntity(SpawnEntity),
+        DespawnEntity(DespawnEntity),
         Heartbeat(Heartbeat),
     }
     impl Packet for ServerPacket {
@@ -82,7 +96,7 @@ mod server_packet_enum {
 
 #[derive(Readable, Writable, Debug, PartialEq, Eq, Clone, Copy)]
 pub struct AcceptConnection {
-    pub connection_id: u64,
+    pub connection_id: NetworkId,
 }
 
 #[derive(Clone, Debug)]
