@@ -1,4 +1,4 @@
 use bevy::prelude::{Component, Deref};
 
 #[derive(Component, Deref)]
-pub struct MovementSpeed(pub usize);
+pub(crate) struct MovementSpeed(pub usize);

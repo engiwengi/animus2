@@ -3,16 +3,16 @@ use speedy::{Readable, Writable};
 use crate::id::NetworkId;
 
 #[derive(Readable, Writable, Debug, PartialEq, Eq, PartialOrd, Clone, Copy)]
-pub struct SpawnEntity {
-    pub id: NetworkId,
+pub(crate) struct SpawnEntity {
+    pub(crate) id: NetworkId,
 }
 
 #[derive(Readable, Writable, Debug, PartialEq, Eq, PartialOrd, Clone, Copy)]
-pub struct DespawnEntity {
-    pub id: NetworkId,
+pub(crate) struct DespawnEntity {
+    pub(crate) id: NetworkId,
 }
 
 #[derive(Readable, Writable, Debug, PartialEq, Eq, PartialOrd, Clone, Copy)]
-pub struct QueryEntity {
-    pub id: NetworkId,
+pub(crate) struct QueryEntity {
+    pub(crate) id: NetworkId,
 }

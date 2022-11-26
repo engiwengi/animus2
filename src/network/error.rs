@@ -1,5 +1,5 @@
 #[derive(thiserror::Error, Debug)]
-pub enum Error {
+pub(crate) enum Error {
     #[error("Generic {0}")]
     Generic(String),
 
@@ -10,4 +10,4 @@ pub enum Error {
     IO(#[from] std::io::Error),
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub(crate) type Result<T> = std::result::Result<T, Error>;

@@ -1,20 +1,21 @@
 use std::{hash::Hash, io::Write, sync::Arc};
 
 use speedy::{Readable, Writable};
+use tracing::trace;
 
-use super::error::Result;
+use super::{error::Result, mediator::AnyPacketHandler};
 use crate::id::NetworkId;
 
-pub struct AnyPacketWithConnId<T> {
-    pub connection_id: NetworkId,
-    pub packet: T,
+pub(crate) struct AnyPacketWithConnId<T> {
+    pub(crate) connection_id: NetworkId,
+    pub(crate) packet: T,
 }
 
 impl<T> AnyPacketWithConnId<T>
 where
     T: Packet,
 {
-    pub fn packet_kind<'a>(&'a self) -> T::Kind
+    pub(crate) fn packet_kind<'a>(&'a self) -> T::Kind
     where
         T::Kind: From<&'a T>,
     {
@@ -22,17 +23,16 @@ where
     }
 }
 
-pub trait Packet: Sized + 'static + From<Heartbeat> + Writable<speedy::LittleEndian> {
+pub(crate) trait Packet:
+    Sized + 'static + From<Heartbeat> + Writable<speedy::LittleEndian>
+{
     type Kind: Hash + Eq + PartialEq + Sized + Send + Sync + std::fmt::Debug;
     type Sender: AnyPacketHandler<Self> + Sync + Send + std::fmt::Debug;
     type OtherPacket: Packet;
 }
 
-pub use client_packet_enum::*;
-pub use server_packet_enum::*;
-use tracing::trace;
-
-use super::mediator::AnyPacketHandler;
+pub(crate) use client_packet_enum::*;
+pub(crate) use server_packet_enum::*;
 
 #[proxy_enum::proxy(ClientPacket)]
 mod client_packet_enum {
@@ -47,7 +47,7 @@ mod client_packet_enum {
 
     #[derive(Readable, Writable, TryInto, Debug, EnumKind)]
     #[enum_kind(ClientPacketKind, derive(Hash))]
-    pub enum ClientPacket {
+    pub(crate) enum ClientPacket {
         SendMessage(SendMessage),
         QueryEntity(QueryEntity),
         PathTargetRequest(PathTargetRequest),
@@ -62,7 +62,7 @@ mod client_packet_enum {
 }
 
 #[derive(Readable, Writable, Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Default)]
-pub struct Heartbeat;
+pub(crate) struct Heartbeat;
 
 #[proxy_enum::proxy(ServerPacket)]
 mod server_packet_enum {
@@ -79,7 +79,7 @@ mod server_packet_enum {
 
     #[derive(Readable, Writable, TryInto, Debug, EnumKind)]
     #[enum_kind(ServerPacketKind, derive(Hash))]
-    pub enum ServerPacket {
+    pub(crate) enum ServerPacket {
         MessageReceived(MessageReceived),
         AcceptConnection(AcceptConnection),
         PathTarget(PathTarget),
@@ -95,17 +95,17 @@ mod server_packet_enum {
 }
 
 #[derive(Readable, Writable, Debug, PartialEq, Eq, Clone, Copy)]
-pub struct AcceptConnection {
-    pub connection_id: NetworkId,
+pub(crate) struct AcceptConnection {
+    pub(crate) connection_id: NetworkId,
 }
 
 #[derive(Clone, Debug)]
-pub struct EncodedPacket {
-    pub bytes: Arc<[u8]>,
+pub(crate) struct EncodedPacket {
+    bytes: Arc<[u8]>,
 }
 
 impl EncodedPacket {
-    pub fn try_encode<T, P>(packet: T) -> Result<Self>
+    pub(crate) fn try_encode<T, P>(packet: T) -> Result<Self>
     where
         P: Packet + From<T> + Writable<speedy::LittleEndian>,
     {
@@ -120,6 +120,10 @@ impl EncodedPacket {
         Ok(Self {
             bytes: bytes.into(),
         })
+    }
+
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.bytes
     }
 }
 

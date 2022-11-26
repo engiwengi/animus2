@@ -1,3 +1,3 @@
-pub mod entity;
-pub mod packet;
-pub mod system;
+pub(crate) mod entity;
+pub(crate) mod packet;
+pub(crate) mod system;

@@ -3,7 +3,7 @@ use bevy::{
     prelude::{
         Changed, Commands, Component, Deref, DerefMut, DetectChanges, Entity, EventReader,
         EventWriter, Input, IntoSystemDescriptor, MouseButton, Plugin, PluginGroup, Query, Res,
-        ResMut, Resource,
+        ResMut, Resource, With,
     },
 };
 use tracing::{error, info};
@@ -14,7 +14,7 @@ use crate::{
     id::{NetworkId, NetworkToWorld},
     network::{
         mediator::PacketWithConnId,
-        plugin::{Client, EntityQuery, Network, Packets, Server},
+        plugin::{Client, EntityQuery, Me, Network, Packets, Server},
     },
     stat::MovementSpeed,
     time::{
@@ -56,7 +56,7 @@ impl Plugin for BasePathPlugin {
         app.add_system(pathfind.label("pathfind"));
         app.add_system(schedule_next_position.after("pathfind").label("schedule"));
         app.add_system(
-            set_position_from_path
+            set_position_from_next_position
                 .after("schedule")
                 .label("set_position"),
         );
@@ -65,7 +65,7 @@ impl Plugin for BasePathPlugin {
 
 impl Plugin for ServerPathPlugin {
     fn build(&self, app: &mut bevy::prelude::App) {
-        app.add_system(receive_from_client);
+        app.add_system(receive_from_client.after("set_position"));
         app.add_system(respond_to_queries);
     }
 }
@@ -79,126 +79,213 @@ impl Plugin for ClientPathPlugin {
 
 // resources
 #[derive(Resource, Deref, DerefMut, Default)]
-pub struct PathResource<T>(T);
+struct PathResource<T>(T);
 
 // components
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Component)]
-pub struct Position {
-    pub x: i32,
-    pub y: i32,
+pub(crate) struct Position {
+    pub(crate) x: i32,
+    pub(crate) y: i32,
 }
 
 impl Position {
-    pub fn taxi_distance(&self, other: Self) -> u32 {
+    pub(crate) fn taxi_distance(&self, other: Self) -> u32 {
         self.x.abs_diff(other.x) + self.y.abs_diff(other.y)
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Component, Default)]
+pub(crate) struct MaybeNextPosition {
+    next_position: Option<NextPosition>,
+}
+
+impl MaybeNextPosition {
+    pub(crate) fn position(self) -> Option<Position> {
+        self.next_position.map(|p| p.position)
+    }
+
+    pub(crate) fn next_position(self) -> Option<NextPosition> {
+        self.next_position
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NextPosition {
+    position: Position,
+    at_tick: usize,
+    prev_tick: usize,
+}
+
+impl NextPosition {
+    fn new(position: Position, at_tick: usize, prev_tick: usize) -> Self {
+        Self {
+            position,
+            at_tick,
+            prev_tick,
+        }
+    }
+
+    pub(crate) fn percent(self, current_tick: usize, overstep_percentage: f64) -> f64 {
+        let speed = (self.at_tick - self.prev_tick) as f64;
+
+        if speed == 0.0 {
+            return 0.0;
+        }
+
+        ((current_tick - self.prev_tick) as f64 / speed) + (overstep_percentage / speed)
+    }
+
+    pub(crate) fn position(&self) -> Position {
+        self.position
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Component, Default)]
-pub struct Path {
-    pub positions: Vec<Position>,
+pub(crate) struct Path {
+    positions: Vec<Position>,
 }
 
 // events
 #[derive(Component)]
-pub struct Target {
-    pub entity: Entity,
-    pub position: Position,
-    pub current_position: Position,
+struct Target {
+    entity: Entity,
+    position: Position,
+    current_or_next_position: Position,
 }
 
 // systems
-pub fn set_position_from_path(
-    mut query: Query<(&mut Position, &mut Path)>,
+
+fn set_position_from_next_position(
+    mut query: Query<(&mut Position, &mut MaybeNextPosition)>,
     mut scheduler: ResMut<PathResource<InnerTimingWheelTree>>,
     tick: Res<Tick>,
 ) {
     for entity in scheduler.tasks(tick.current()) {
-        let Ok((mut position, mut path)) = query.get_mut(entity) else {
+        let Ok((mut position,  mut maybe_next_position)) = query.get_mut(entity) else {
             continue;
         };
 
-        let Some(next_position) = path.positions.pop() else {
+        let Some(next_position) = maybe_next_position.next_position.take() else {
             continue;
         };
 
-        *position = next_position;
+        *position = next_position.position;
     }
 }
 
-pub fn schedule_next_position(
-    mut query: Query<(Entity, &MovementSpeed, &Path), Changed<Position>>,
+fn schedule_next_position(
+    mut query: Query<
+        (Entity, &MovementSpeed, &mut Path, &mut MaybeNextPosition),
+        Changed<MaybeNextPosition>,
+    >,
     mut scheduler: ResMut<PathResource<InnerTimingWheelTree>>,
     tick: Res<Tick>,
 ) {
-    for (entity, speed, path) in query.iter_mut() {
-        if path.positions.last().is_none() {
+    for (entity, speed, mut path, mut next) in query.iter_mut() {
+        if next.next_position.is_some() {
+            error!("shouldn't happen");
             continue;
         }
+        let at_tick = tick.current() + **speed;
 
-        scheduler.schedule(tick.current() + **speed, entity);
+        next.next_position = path
+            .positions
+            .pop()
+            .map(|p| NextPosition::new(p, at_tick, tick.current()));
+
+        if next.next_position.is_some() {
+            scheduler.schedule(at_tick, entity);
+        }
     }
 }
 
-pub fn pathfind(
+fn pathfind(
     mut commands: Commands,
-    mut query: Query<(Option<&mut Path>, Option<&mut Position>)>,
+    mut query: Query<(
+        Option<&mut Path>,
+        Option<&Position>,
+        Option<&mut MaybeNextPosition>,
+    )>,
     mut path_targets: EventReader<Target>,
 ) {
     for target in path_targets.iter() {
-        let (mut path, mut position) = match query.get_mut(target.entity) {
-            Ok((Some(path), Some(position))) => (path, position),
+        let (mut path, position, mut next_position) = match query.get_mut(target.entity) {
+            Ok((Some(path), Some(position), Some(next_position))) => {
+                (path, position, next_position)
+            }
             Ok((..)) => {
                 let mut path = Path::default();
-                update_path(&mut path, target.position, target.current_position);
-                commands
-                    .entity(target.entity)
-                    .insert((path, target.current_position));
+                update_path(&mut path, target.position, target.current_or_next_position);
+                let next_position = MaybeNextPosition {
+                    next_position: None,
+                };
+                commands.entity(target.entity).insert((
+                    path,
+                    target.current_or_next_position,
+                    next_position,
+                ));
 
                 continue;
             }
-            Err(_) => continue,
+            Err(_) => continue, // unknown entity
         };
 
-        let current_target_position = path.positions.first();
+        let current_or_next_position = next_position.position().unwrap_or(*position);
+        let current_target = path.positions.first();
 
-        if current_target_position.is_none() {
-            position.set_changed();
-        }
+        // if current_next_position.is_none() {
+        //     position.set_changed();
+        // }
 
-        if position.x.abs_diff(target.current_position.x) > 1
-            || position.y.abs_diff(target.current_position.y) > 1
+        if current_or_next_position
+            .x
+            .abs_diff(target.current_or_next_position.x)
+            > 4
+            || current_or_next_position
+                .y
+                .abs_diff(target.current_or_next_position.y)
+                > 4
         {
-            update_path(&mut path, target.position, target.current_position);
-        } else if current_target_position.map_or(true, |&p| p != target.position) {
-            update_path(&mut path, target.position, *position);
+            update_path(&mut path, target.position, target.current_or_next_position);
+        } else if current_target.map_or(true, |&current_target| current_target != target.position) {
+            update_path(&mut path, target.position, current_or_next_position);
         };
+
+        if next_position.next_position.is_none() {
+            next_position.set_changed();
+            // next_position.position = path.positions.pop();
+        }
     }
 }
 
-pub fn receive_from_client(
+fn receive_from_client(
     mut path_targets: EventWriter<Target>,
     packets: Res<Packets<PacketWithConnId<PathTargetRequest>>>,
     clients: Query<&Network<Client>>,
-    positions: Query<&Position>,
+    positions: Query<(&Position, &MaybeNextPosition)>,
     entities: Res<NetworkToWorld<Server>>,
 ) {
-    while let Ok(packet) = packets.receiver.try_recv() {
+    for packet in packets.iter() {
         let Some(entity) = entities.get(&packet.connection_id) else {
             error!("Packet for unknown entity received");
             continue;
         };
 
-        let Ok(current_position) = positions.get(*entity) else {
+        let Ok((current_position, current_next_position)) = positions.get(*entity) else {
+            error!("no next position");
             continue;
         };
+
+        let current_or_next_position = current_next_position
+            .position()
+            .unwrap_or(*current_position);
 
         let path_target = PathTarget {
             id: packet.connection_id,
             x: packet.packet.x,
             y: packet.packet.y,
-            current_x: current_position.x,
-            current_y: current_position.y,
+            current_or_next_x: current_or_next_position.x,
+            current_or_next_y: current_or_next_position.y,
         };
 
         path_targets.send(Target {
@@ -207,19 +294,19 @@ pub fn receive_from_client(
                 x: packet.packet.x,
                 y: packet.packet.y,
             },
-            current_position: *current_position,
+            current_or_next_position,
         });
 
         let _ = Network::<Client>::send_all(clients.iter(), path_target);
     }
 }
 
-pub fn receive_from_server(
+fn receive_from_server(
     mut path_targets: EventWriter<Target>,
     packets: Res<Packets<PathTarget>>,
     network_to_world: Res<NetworkToWorld<Client>>,
 ) {
-    while let Ok(packet) = packets.receiver.try_recv() {
+    for packet in packets.iter() {
         let Some(entity) = network_to_world.get(&packet.id) else {
             error!("Packet for unknown entity received");
             continue;
@@ -231,16 +318,18 @@ pub fn receive_from_server(
                 x: packet.x,
                 y: packet.y,
             },
-            current_position: Position {
-                x: packet.current_x,
-                y: packet.current_y,
+            current_or_next_position: Position {
+                x: packet.current_or_next_x,
+                y: packet.current_or_next_y,
             },
         });
     }
 }
 
-pub fn request_path(
+fn request_path(
+    mut path_targets: EventWriter<Target>,
     server: Query<&Network<Server>>,
+    me: Query<(Entity, &Position), With<Me>>,
     mouse_world_coords: Res<MouseWorldCoordinates>,
     mouse_events: Res<Input<MouseButton>>,
 ) {
@@ -249,6 +338,22 @@ pub fn request_path(
             error!("Client not yet connected");
             return;
         };
+        let Ok((me, position)) = me.get_single() else {
+            error!("Client has not yet spawned itself");
+            return;
+        };
+
+        path_targets.send(Target {
+            entity: me,
+            current_or_next_position: Position {
+                x: position.x,
+                y: position.y,
+            },
+            position: Position {
+                x: mouse_world_coords.x,
+                y: mouse_world_coords.y,
+            },
+        });
 
         if let Err(e) = server.send(PathTargetRequest {
             x: mouse_world_coords.x,
@@ -277,8 +382,8 @@ fn respond_to_queries(
             id,
             x: path.positions.first().map(|p| p.x).unwrap_or(position.x),
             y: path.positions.first().map(|p| p.y).unwrap_or(position.y),
-            current_x: position.x,
-            current_y: position.y,
+            current_or_next_x: position.x,
+            current_or_next_y: position.y,
         };
 
         let _ = client.send(path_target);

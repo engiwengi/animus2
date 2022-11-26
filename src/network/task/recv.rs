@@ -12,7 +12,7 @@ use crate::{
     },
 };
 
-pub struct ReceivePacketsTask<R, T>
+pub(in crate::network) struct ReceivePacketsTask<R, T>
 where
     T: Packet,
 {
@@ -26,7 +26,11 @@ where
     R: AsyncRead + Unpin + 'd,
     T: Packet,
 {
-    pub fn new(socket: R, packet_mediator: AnyPacketMediator<T>, connection_id: NetworkId) -> Self {
+    pub(in crate::network) fn new(
+        socket: R,
+        packet_mediator: AnyPacketMediator<T>,
+        connection_id: NetworkId,
+    ) -> Self {
         Self {
             socket: Socket::new(socket),
             packet_mediator,
@@ -34,7 +38,7 @@ where
         }
     }
 
-    pub async fn _run(
+    pub(in crate::network) async fn _run(
         mut self,
         stop: async_std::channel::Receiver<()>,
         disconnect_broadcast: BroadcastChannel<()>,

@@ -13,19 +13,22 @@ use tracing::info;
 use super::{
     accept::{QuicConnector, QuicListener},
     connection::Connection,
-    error::{Error, Result},
+    error::Result,
     mediator::{AnyPacketMediator, PacketSenderMap, PacketWithConnId},
     packet::{AcceptConnection, ClientPacket, EncodedPacket, Packet, ServerPacket},
     task::{accept::AcceptConnectionsTask, recv::ReceivePacketsTask, send::SendPacketsTask},
 };
 use crate::{
-    ambit::packet::{DespawnEntity, QueryEntity, SpawnEntity},
+    ambit::{
+        packet::{DespawnEntity, QueryEntity, SpawnEntity},
+        plugin::Player,
+    },
     channel::BroadcastChannel,
     chat::packet::SendMessage,
     id::{NetworkId, NetworkToWorld},
     path::{
         packet::{PathTarget, PathTargetRequest},
-        plugin::{Path, Position},
+        plugin::{MaybeNextPosition, Path, Position},
     },
     stat::MovementSpeed,
 };
@@ -87,7 +90,7 @@ impl Plugin for NetworkPlugin {
     }
 }
 
-pub trait AddPacketAppExt {
+trait AddPacketAppExt {
     fn add_packet<T, P>(&mut self)
     where
         T: Send + Sync + 'static,
@@ -107,24 +110,28 @@ impl AddPacketAppExt for App {
         let mut packet_map = self.world.get_resource_mut::<PacketSenderMap<P>>().unwrap();
         let (tx, rx) = crossbeam_channel::unbounded::<T>();
         packet_map.add(tx);
-        self.insert_resource(Packets::new(rx));
+        self.insert_resource(Packets { receiver: rx });
     }
 }
 
 // resources
 #[derive(Resource)]
-pub struct Packets<P> {
-    pub receiver: Receiver<P>,
+pub(crate) struct Packets<P> {
+    receiver: Receiver<P>,
 }
 
 impl<P> Packets<P> {
-    fn new(receiver: Receiver<P>) -> Self {
-        Self { receiver }
+    pub(crate) fn iter(&self) -> crossbeam_channel::TryIter<P> {
+        self.receiver.try_iter()
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.receiver.is_empty()
     }
 }
 
 #[derive(Resource)]
-pub struct Quit {
+pub(crate) struct Quit {
     sender: async_std::channel::Sender<()>,
     receiver: async_std::channel::Receiver<()>,
 }
@@ -136,7 +143,7 @@ impl Default for Quit {
 }
 
 #[derive(Resource)]
-pub struct ConnectionReceiver<S>
+struct ConnectionReceiver<S>
 where
     S: Send + Sync + 'static,
 {
@@ -157,7 +164,7 @@ where
 }
 
 #[derive(Resource)]
-pub struct Disconnections<S>
+struct Disconnections<S>
 where
     S: Send + Sync + 'static,
 {
@@ -181,10 +188,10 @@ where
 }
 
 #[derive(Resource)]
-pub struct ConnectionRequester(async_std::channel::Sender<SocketAddr>);
+struct ConnectionRequester(async_std::channel::Sender<SocketAddr>);
 
 #[derive(Resource)]
-pub struct AcceptTask<S>
+struct AcceptTask<S>
 where
     S: Send + Sync + 'static,
 {
@@ -206,9 +213,9 @@ where
 
 // components
 #[derive(Component)]
-pub struct Network<S>
+pub(crate) struct Network<S>
 where
-    S: Send + Sync + 'static,
+    S: Service,
 {
     sender: async_std::channel::Sender<EncodedPacket>,
     marker: PhantomData<S>,
@@ -216,7 +223,7 @@ where
 
 impl<S> Network<S>
 where
-    S: Send + Sync + 'static,
+    S: Service,
 {
     fn new(sender: async_std::channel::Sender<EncodedPacket>) -> Self {
         Self {
@@ -225,52 +232,58 @@ where
         }
     }
 
-    pub fn send<T>(&self, packet: T) -> Result<()>
+    pub(crate) fn send<T>(&self, packet: T) -> Result<()>
     where
-        S: Service,
         S::Packet: From<T>,
     {
         let encoded_packet = EncodedPacket::try_encode::<T, S::Packet>(packet)?;
 
-        self.sender
-            .send_blocking(encoded_packet)
-            .map_err(|_| Error::Generic("Sender unexpectedly closed".to_owned()))?;
+        self.send_encoded(encoded_packet);
 
         Ok(())
     }
 
-    pub fn send_all<'a, T, I>(iter: I, packet: T) -> Result<()>
+    pub(crate) fn send_all<'a, T, I>(iter: I, packet: T) -> Result<()>
     where
-        S: Service,
         S::Packet: From<T>,
         I: Iterator<Item = &'a Self>,
     {
         let encoded_packet = EncodedPacket::try_encode::<T, S::Packet>(packet)?;
 
         for network in iter {
-            let _ = network
-                .sender
-                .send_blocking(encoded_packet.clone())
-                .map_err(|_| Error::Generic("Sender unexpectedly closed".to_owned()));
+            network.send_encoded(encoded_packet.clone());
         }
 
         Ok(())
     }
+
+    fn send_encoded(&self, packet: EncodedPacket) {
+        let sender = self.sender.clone();
+
+        IoTaskPool::get()
+            .spawn(async move {
+                #[cfg(feature = "lag")]
+                async_std::task::sleep(std::time::Duration::from_millis(100)).await;
+
+                let _ = sender.send(packet).await;
+            })
+            .detach();
+    }
 }
 
 // events
-pub struct NewConnection {
+struct NewConnection {
     id: NetworkId,
 }
 
-pub struct EntityQuery {
-    pub entity: Entity,
-    pub querier: Entity,
+pub(crate) struct EntityQuery {
+    pub(crate) entity: Entity,
+    pub(crate) querier: Entity,
 }
 
 // util
 #[derive(Component, Default)]
-pub struct Server;
+pub(crate) struct Server;
 
 impl Service for Server {
     type Other = Client;
@@ -278,14 +291,17 @@ impl Service for Server {
 }
 
 #[derive(Component, Default)]
-pub struct Client;
+pub(crate) struct Client;
+
+#[derive(Component, Default)]
+pub(crate) struct Me;
 
 impl Service for Client {
     type Other = Server;
     type Packet = ServerPacket;
 }
 
-pub trait Service: Send + Sync + 'static + Component {
+pub(crate) trait Service: Send + Sync + 'static + Component {
     type Packet: Packet;
     type Other: Service;
 }
@@ -406,8 +422,10 @@ fn spawn_new_client_connections(
                 conn_id,
                 network,
                 Position { x: 0, y: 0 },
-                MovementSpeed(1),
+                MovementSpeed(3),
                 Path::default(),
+                Player,
+                MaybeNextPosition::default(),
             ))
             .id();
 
@@ -466,19 +484,26 @@ fn spawn_self(
     mut commands: Commands,
     mut network_to_world: ResMut<NetworkToWorld<Client>>,
     accept_connections: Res<Packets<AcceptConnection>>,
+    server: Query<&Network<Server>>,
 ) {
+    if accept_connections.receiver.is_empty() {
+        return;
+    }
+
+    let Ok(server) = server.get_single() else {
+        return;
+    };
+
     for conn in accept_connections.receiver.try_iter() {
         let entity = commands
-            .spawn((
-                conn.connection_id,
-                Position { x: 0, y: 0 },
-                MovementSpeed(1),
-                Path::default(),
-            ))
+            .spawn((conn.connection_id, MovementSpeed(3), Player, Me))
             .id();
 
-        info!("creating network entity: {}", conn.connection_id);
         network_to_world.insert(conn.connection_id, entity);
+
+        let _ = server.send(QueryEntity {
+            id: conn.connection_id,
+        });
     }
 }
 

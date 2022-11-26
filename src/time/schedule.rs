@@ -2,12 +2,12 @@ use bevy::prelude::{Entity, Res, ResMut, Resource};
 
 use super::tick::Tick;
 
-pub struct TimingWheel<'a, S>
+pub(crate) struct TimingWheel<'a, S>
 where
     S: Resource,
 {
-    pub scheduler: ResMut<'a, S>,
-    pub tick: Res<'a, Tick>,
+    pub(crate) scheduler: ResMut<'a, S>,
+    pub(crate) tick: Res<'a, Tick>,
 }
 
 impl<'a, S> TimingWheel<'a, S>
@@ -26,7 +26,7 @@ where
 }
 
 #[derive(Clone)]
-pub enum InnerTimingWheelTree {
+pub(crate) enum InnerTimingWheelTree {
     Wheel {
         buckets: Box<[InnerTimingWheelTree; 32]>,
         layer: u32,
@@ -51,7 +51,7 @@ impl std::fmt::Debug for InnerTimingWheelTree {
 }
 
 impl InnerTimingWheelTree {
-    pub fn new(layers: u32) -> Self {
+    pub(crate) fn new(layers: u32) -> Self {
         let bucket = if let 0 = layers {
             Self::Bucket(Vec::new())
         } else {
@@ -98,7 +98,7 @@ impl Scheduler for InnerTimingWheelTree {
     }
 }
 
-pub trait Scheduler {
+pub(crate) trait Scheduler {
     type I<'a>: Iterator<Item = Entity> + 'a
     where
         Self: 'a;

@@ -1,4 +1,4 @@
-pub struct BroadcastChannel<T> {
+pub(crate) struct BroadcastChannel<T> {
     pub notify: async_std::channel::Sender<T>,
     pub notified: async_std::channel::Receiver<T>,
 }

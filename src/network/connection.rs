@@ -7,31 +7,31 @@ use crate::id::NetworkId;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
-pub fn next_id() -> u64 {
+pub(crate) fn next_id() -> u64 {
     NEXT_ID.fetch_add(1, Ordering::SeqCst)
 }
 
 #[derive(Deref, DerefMut)]
-pub struct Connection<R> {
+pub(crate) struct Connection<R> {
     #[deref]
     #[deref_mut]
-    pub value: R,
+    pub(crate) value: R,
     connection_id: NetworkId,
 }
 
 impl<R> Connection<R> {
-    pub fn new(io: R) -> Self {
+    pub(crate) fn new(io: R) -> Self {
         Self {
             value: io,
             connection_id: NetworkId::from(next_id()),
         }
     }
 
-    pub fn connection_id(&self) -> NetworkId {
+    pub(crate) fn connection_id(&self) -> NetworkId {
         self.connection_id
     }
 
-    pub fn map<T, F>(&self, f: F) -> Connection<T>
+    pub(crate) fn map<T, F>(&self, f: F) -> Connection<T>
     where
         F: Fn(&R) -> T,
     {

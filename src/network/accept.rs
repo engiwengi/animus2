@@ -11,7 +11,7 @@ use bevy::tasks::IoTaskPool;
 use futures::{Future, FutureExt, StreamExt};
 use quinn::{Endpoint, ServerConfig};
 
-pub struct Accept<'a, A: ?Sized> {
+pub(crate) struct Accept<'a, A: ?Sized> {
     acceptor: &'a mut A,
 }
 
@@ -26,7 +26,7 @@ where
     }
 }
 
-pub trait AsyncAccept {
+pub(crate) trait AsyncAccept {
     type Connection;
     fn poll_accept(
         self: Pin<&mut Self>,
@@ -34,7 +34,7 @@ pub trait AsyncAccept {
     ) -> Poll<std::io::Result<Self::Connection>>;
 }
 
-pub struct QuicListener {
+pub(crate) struct QuicListener {
     stream_rx: Option<futures::channel::oneshot::Receiver<std::io::Result<quinn::Connection>>>,
     endpoint: Endpoint,
 }
@@ -45,7 +45,7 @@ fn generate_self_signed_cert(
     Ok((rustls::Certificate(cert.serialize_der()?), key))
 }
 impl QuicListener {
-    pub fn new(addr: SocketAddr) -> Self {
+    pub(crate) fn new(addr: SocketAddr) -> Self {
         let (cert, key) = generate_self_signed_cert().unwrap();
         let server_config = rustls::ServerConfig::builder()
             .with_safe_defaults()
@@ -107,14 +107,14 @@ impl AsyncAccept for QuicListener {
     }
 }
 
-pub struct QuicConnector {
+pub(crate) struct QuicConnector {
     connect_to: async_std::channel::Receiver<SocketAddr>,
     stream_rx: Option<futures::channel::oneshot::Receiver<std::io::Result<quinn::Connection>>>,
-    pub endpoint: Endpoint,
+    pub(crate) endpoint: Endpoint,
 }
 
 impl QuicConnector {
-    pub fn new(connect_to: async_std::channel::Receiver<SocketAddr>) -> Self {
+    pub(crate) fn new(connect_to: async_std::channel::Receiver<SocketAddr>) -> Self {
         // TODO should not do this
         let crypto = rustls::ClientConfig::builder()
             .with_safe_defaults()
@@ -181,7 +181,7 @@ impl AsyncAccept for QuicConnector {
     }
 }
 
-pub trait AsyncAcceptExt: AsyncAccept {
+pub(crate) trait AsyncAcceptExt: AsyncAccept {
     fn accept(&mut self) -> Accept<'_, Self> {
         Accept { acceptor: self }
     }

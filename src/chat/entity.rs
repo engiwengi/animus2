@@ -4,22 +4,22 @@ use super::packet::MessageReceived;
 use crate::id::NetworkId;
 
 #[derive(Default)]
-pub struct Chat {
-    pub messages: Vec<Message>,
+pub(crate) struct Chat {
+    pub(crate) messages: Vec<Message>,
 }
 
 impl Chat {
-    pub fn push(&mut self, message: MessageReceived) {
+    pub(crate) fn push(&mut self, message: MessageReceived) {
         self.messages.push(Message::from(message));
     }
 }
 
 #[derive(Default)]
-pub struct ChatInput {
-    pub input: String,
+pub(crate) struct ChatInput {
+    pub(crate) input: String,
 }
 
-pub struct Message {
+pub(crate) struct Message {
     sender: NetworkId,
     contents: String,
     kind: MessageKind,
@@ -36,6 +36,6 @@ impl From<MessageReceived> for Message {
 }
 
 #[derive(Readable, Writable, Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-pub enum MessageKind {
+pub(crate) enum MessageKind {
     Shout,
 }

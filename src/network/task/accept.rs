@@ -7,7 +7,7 @@ use crate::network::{
     connection::Connection,
 };
 
-pub struct AcceptConnectionsTask<A>
+pub(in crate::network) struct AcceptConnectionsTask<A>
 where
     A: AsyncAccept,
 {
@@ -19,14 +19,17 @@ impl<A> AcceptConnectionsTask<A>
 where
     A: AsyncAccept + Unpin,
 {
-    pub fn new(acceptor: A, new_connections: Sender<Connection<A::Connection>>) -> Self {
+    pub(in crate::network) fn new(
+        acceptor: A,
+        new_connections: Sender<Connection<A::Connection>>,
+    ) -> Self {
         Self {
             acceptor,
             new_connections,
         }
     }
 
-    pub async fn _run(mut self, stop: async_std::channel::Receiver<()>) {
+    pub(in crate::network) async fn _run(mut self, stop: async_std::channel::Receiver<()>) {
         let stop = stop.recv().fuse();
         pin_mut!(stop);
         loop {

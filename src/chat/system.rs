@@ -7,13 +7,13 @@
 // use crate::network::{client::NetworkClient, mediator::PacketWithConnId,
 // server::NetworkServer};
 //
-// pub fn add_messages_to_chats(new_messages: &Receiver<MessageReceived>, chat:
-// &mut Chat) {     for new_message in new_messages.try_iter() {
+// pub(crate) fn add_messages_to_chats(new_messages: &Receiver<MessageReceived>,
+// chat: &mut Chat) {     for new_message in new_messages.try_iter() {
 //         chat.push(new_message);
 //     }
 // }
 //
-// pub fn broadcast_shouts_to_all_clients(
+// pub(crate) fn broadcast_shouts_to_all_clients(
 //     sent_messages: &Receiver<PacketWithConnId<SendMessage>>,
 //     network: &NetworkServer,
 // ) {
@@ -22,7 +22,7 @@
 // network.clients());     }
 // }
 //
-// pub fn send_message(chat: &mut ChatInput, network: &NetworkClient) {
+// pub(crate) fn send_message(chat: &mut ChatInput, network: &NetworkClient) {
 //     let contents = std::mem::take(&mut chat.input);
 //
 //     let send_message = SendMessage {

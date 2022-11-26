@@ -4,15 +4,15 @@ use tracing::trace;
 
 use super::packet::{EncodedPacket, Packet};
 
-pub const MAX_PACKET_LENGTH: usize = 5000;
+const MAX_PACKET_LENGTH: usize = 5000;
 
-pub struct Socket<T> {
+pub(super) struct Socket<T> {
     io: T,
     buffer: Vec<u8>,
 }
 
 impl<T> Socket<T> {
-    pub fn new(io: T) -> Self {
+    pub(crate) fn new(io: T) -> Self {
         Self {
             io,
             buffer: Vec::with_capacity(MAX_PACKET_LENGTH),
@@ -24,7 +24,7 @@ impl<T> Socket<T>
 where
     T: AsyncRead + Unpin,
 {
-    pub async fn ready(&mut self) -> Result<usize, std::io::Error> {
+    pub(super) async fn ready(&mut self) -> Result<usize, std::io::Error> {
         trace!("Waiting for next packet");
         let mut length_buffer = [0u8; 4];
         self.io.read_exact(&mut length_buffer).await?;
@@ -42,7 +42,7 @@ where
         Ok(length)
     }
 
-    pub async fn next<'d, P>(&mut self) -> Result<P, std::io::Error>
+    pub(super) async fn next<'d, P>(&mut self) -> Result<P, std::io::Error>
     where
         P: Packet + Readable<'d, speedy::LittleEndian>,
     {
@@ -59,9 +59,9 @@ impl<T> Socket<T>
 where
     T: AsyncWrite + Unpin,
 {
-    pub async fn send(&mut self, packet: EncodedPacket) -> Result<(), std::io::Error> {
+    pub(super) async fn send(&mut self, packet: EncodedPacket) -> Result<(), std::io::Error> {
         trace!("Writing packet: {:?}", &packet);
-        self.io.write_all(&packet.bytes).await?;
+        self.io.write_all(packet.bytes()).await?;
         Ok(())
     }
 }

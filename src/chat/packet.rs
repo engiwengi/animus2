@@ -4,16 +4,16 @@ use super::entity::MessageKind;
 use crate::{id::NetworkId, network::mediator::PacketWithConnId};
 
 #[derive(Readable, Writable, Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub struct SendMessage {
-    pub kind: MessageKind,
-    pub contents: String,
+pub(crate) struct SendMessage {
+    pub(crate) kind: MessageKind,
+    pub(crate) contents: String,
 }
 
 #[derive(Readable, Writable, Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub struct MessageReceived {
-    pub sender: NetworkId,
-    pub kind: MessageKind,
-    pub contents: String,
+pub(crate) struct MessageReceived {
+    pub(crate) sender: NetworkId,
+    pub(crate) kind: MessageKind,
+    pub(crate) contents: String,
 }
 
 impl From<PacketWithConnId<SendMessage>> for MessageReceived {

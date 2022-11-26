@@ -1,28 +1,28 @@
 use bevy::{
-    prelude::{Plugin, ResMut, Resource, SystemSet},
+    prelude::{Plugin, Res, ResMut, Resource, SystemSet},
     time::FixedTimestep,
 };
-use crossbeam_channel::Receiver;
 
 use super::packet::TickSync;
+use crate::network::plugin::Packets;
 
-const TIMESTEP: f64 = 6.0 / 60.0;
+const TIMESTEP: f64 = 3.0 / 60.0;
 
 #[derive(Clone, Copy, Resource, Default)]
-pub struct Tick {
+pub(crate) struct Tick {
     current: usize,
 }
 
 impl Tick {
-    pub fn set(&mut self, to: usize) {
+    pub(crate) fn set(&mut self, to: usize) {
         self.current = to;
     }
 
-    pub fn increment(&mut self) {
+    pub(crate) fn increment(&mut self) {
         self.current = self.current.wrapping_add(1);
     }
 
-    pub fn current(self) -> usize {
+    pub(crate) fn current(self) -> usize {
         self.current
     }
 }
@@ -40,33 +40,36 @@ impl Plugin for TickPlugin {
         app.add_system_set(
             SystemSet::new()
                 .label("increment_tick")
-                .with_run_criteria(FixedTimestep::step(TIMESTEP))
+                .with_run_criteria(FixedTimestep::step(TIMESTEP).with_label("tick"))
                 .with_system(increment_tick),
         );
     }
 }
 
 #[derive(Clone, Copy, Resource)]
-pub struct TickTarget {
+pub(crate) struct TickTarget {
     current: usize,
 }
 
 impl TickTarget {
-    pub fn set(&mut self, to: usize) {
+    pub(crate) fn set(&mut self, to: usize) {
         self.current = to;
     }
 
-    pub fn increment(&mut self) {
+    pub(crate) fn increment(&mut self) {
         self.current = self.current.wrapping_add(1);
     }
 
-    pub fn current(self) -> usize {
+    pub(crate) fn current(self) -> usize {
         self.current
     }
 }
 
-pub fn sync_from_server(mut tick_target: ResMut<TickTarget>, packets: Receiver<TickSync>) {
-    while let Ok(packet) = packets.try_recv() {
+pub(crate) fn sync_from_server(
+    mut tick_target: ResMut<TickTarget>,
+    packets: Res<Packets<TickSync>>,
+) {
+    for packet in packets.iter() {
         tick_target.set(packet.current);
     }
 }

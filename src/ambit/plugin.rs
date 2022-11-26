@@ -1,6 +1,6 @@
 use bevy::prelude::{
-    Changed, Commands, Component, Entity, EventReader, EventWriter, IntoSystemDescriptor, Plugin,
-    Query, Res, ResMut,
+    Changed, Commands, Component, EventReader, EventWriter, IntoSystemDescriptor, Plugin, Query,
+    Res, ResMut,
 };
 use tracing::error;
 
@@ -8,7 +8,7 @@ use super::packet::{DespawnEntity, QueryEntity, SpawnEntity};
 use crate::{
     id::{NetworkId, NetworkToWorld},
     network::plugin::{Client, Network, Packets, Server},
-    path::plugin::Position,
+    path::plugin::{MaybeNextPosition, Position},
     stat::MovementSpeed,
 };
 
@@ -25,11 +25,6 @@ impl Plugin for AmbitPlugin {
                     .after("set_position")
                     .label("collision"),
             );
-            app.add_system(
-                update_last_position
-                    .after("set_position")
-                    .after("collision"),
-            );
             app.add_system(notify_visibility_change_to_clients);
         }
 
@@ -44,40 +39,45 @@ impl Plugin for AmbitPlugin {
 
 // component
 #[derive(Component)]
-struct LastPosition {
-    position: Position,
-}
+pub(crate) struct Player;
 
 // event
-pub struct VisibilityCollision {
+struct VisibilityCollision {
     ids: [NetworkId; 2],
     kind: VisibilityCollisionKind,
 }
 
 // util
-pub enum VisibilityCollisionKind {
+enum VisibilityCollisionKind {
     Enter,
     Leave,
 }
 
 // system
 fn raise_events_on_collisions(
-    changed_positions: Query<(&Position, Option<&LastPosition>, &NetworkId), Changed<Position>>,
+    changed_positions: Query<
+        (&Position, Option<&MaybeNextPosition>, &NetworkId),
+        Changed<Position>,
+    >,
     positions: Query<(&Position, &NetworkId)>,
     mut collisions: EventWriter<VisibilityCollision>,
 ) {
-    for (position1, last_position, network1) in changed_positions.iter() {
+    for (position1, maybe_next_position, network1) in changed_positions.iter() {
         for (position2, network2) in positions.iter() {
             if *network2 == *network1 {
                 continue;
             }
 
-            let kind = if position1.taxi_distance(*position2) > 12
-                && last_position.map_or(false, |pos| pos.position.taxi_distance(*position2) <= 12)
+            let kind = if position1.taxi_distance(*position2) < 12
+                && maybe_next_position
+                    .and_then(|m| m.position())
+                    .map_or(false, |pos| pos.taxi_distance(*position2) >= 12)
             {
                 VisibilityCollisionKind::Leave
-            } else if position1.taxi_distance(*position2) <= 10
-                && last_position.map_or(true, |pos| pos.position.taxi_distance(*position2) > 10)
+            } else if position1.taxi_distance(*position2) >= 10
+                && maybe_next_position
+                    .and_then(|m| m.position())
+                    .map_or(true, |pos| pos.taxi_distance(*position2) < 10)
             {
                 VisibilityCollisionKind::Enter
             } else {
@@ -87,21 +87,6 @@ fn raise_events_on_collisions(
             collisions.send(VisibilityCollision {
                 ids: [*network1, *network2],
                 kind,
-            });
-        }
-    }
-}
-
-fn update_last_position(
-    mut commands: Commands,
-    mut changed_positions: Query<(Entity, &Position, Option<&mut LastPosition>), Changed<Position>>,
-) {
-    for (entity, position, maybe_last_position) in changed_positions.iter_mut() {
-        if let Some(mut last_position) = maybe_last_position {
-            last_position.position = *position;
-        } else {
-            commands.entity(entity).insert(LastPosition {
-                position: *position,
             });
         }
     }
@@ -145,14 +130,14 @@ fn receive_visibility_change_from_server(
     mut network_to_world: ResMut<NetworkToWorld<Client>>,
     server: Query<&Network<Server>>,
 ) {
-    if !spawn_entities.receiver.is_empty() {
+    if !spawn_entities.is_empty() {
         let Ok(server) = server.get_single() else {
             error!("Client not yet connected");
             return;
         };
 
-        for spawn in spawn_entities.receiver.try_iter() {
-            let entity = commands.spawn((spawn.id, MovementSpeed(1))).id();
+        for spawn in spawn_entities.iter() {
+            let entity = commands.spawn((spawn.id, MovementSpeed(3), Player)).id();
             if let Some(prev) = network_to_world.insert(spawn.id, entity) {
                 error!("entity already existed");
                 commands.entity(prev).despawn();
@@ -161,7 +146,7 @@ fn receive_visibility_change_from_server(
         }
     }
 
-    for despawn in despawn_entities.receiver.try_iter() {
+    for despawn in despawn_entities.iter() {
         let Some(entity) = network_to_world.remove(&despawn.id) else {
             error!("received unknown network id");
             continue;

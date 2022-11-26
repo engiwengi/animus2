@@ -1,5 +1,5 @@
 use crate::id::NetworkId;
 
-pub struct NetworkIdConnected {
+pub(crate) struct NetworkIdConnected {
     id: NetworkId,
 }

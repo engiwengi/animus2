@@ -23,7 +23,7 @@ use speedy::{Readable, Writable};
     Display,
     Component,
 )]
-pub struct NetworkId(u64);
+pub(crate) struct NetworkId(u64);
 
 impl From<u64> for NetworkId {
     fn from(value: u64) -> Self {
@@ -32,7 +32,7 @@ impl From<u64> for NetworkId {
 }
 
 #[derive(Resource, Deref, DerefMut, Default)]
-pub struct NetworkToWorld<S>
+pub(crate) struct NetworkToWorld<S>
 where
     S: Send + Sync + 'static,
 {

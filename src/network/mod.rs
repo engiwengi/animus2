@@ -1,25 +1,25 @@
-pub mod accept;
-pub mod client;
-pub mod connection;
-pub mod error;
-pub mod event;
-pub mod mediator;
-pub mod packet;
+pub(crate) mod accept;
+pub(crate) mod client;
+pub(crate) mod connection;
+pub(crate) mod error;
+pub(crate) mod event;
+pub(crate) mod mediator;
+pub(crate) mod packet;
 pub mod plugin;
-pub mod server;
-pub mod shared;
-pub mod socket;
-pub mod task;
+pub(crate) mod server;
+pub(crate) mod shared;
+pub(crate) mod socket;
+pub(crate) mod task;
 
 #[cfg(test)]
-pub mod test_utils {
+pub(crate) mod test_utils {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use tracing::trace;
 
     static NEXT_PORT: AtomicU64 = AtomicU64::new(5600);
 
-    pub fn next_local_addr() -> String {
+    pub(crate) fn next_local_addr() -> String {
         let ret = format!("127.0.0.1:{}", NEXT_PORT.fetch_add(1, Ordering::SeqCst));
         trace!("Next local addr: {}", ret);
         ret

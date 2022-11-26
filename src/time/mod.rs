@@ -1,3 +1,3 @@
-pub mod packet;
-pub mod schedule;
+pub(crate) mod packet;
+pub(crate) mod schedule;
 pub mod tick;
