@@ -1,13 +1,10 @@
 pub(crate) mod accept;
-pub(crate) mod client;
 pub(crate) mod connection;
 pub(crate) mod error;
 pub(crate) mod event;
 pub(crate) mod mediator;
 pub(crate) mod packet;
 pub mod plugin;
-pub(crate) mod server;
-pub(crate) mod shared;
 pub(crate) mod socket;
 pub(crate) mod task;
 
